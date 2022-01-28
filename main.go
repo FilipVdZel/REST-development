@@ -1,14 +1,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 //Time type stryct
@@ -18,14 +25,20 @@ type date_time struct {
 
 // User type struct
 type User struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Surname string `json:"surname"`
+	ID      primitive.ObjectID `bson:"_id,omitempty"`
+	Name    string             `bson:"name",omitempty`
+	Surname string             `bson:"surname",omitempty`
+	Dob     string             `bson:"dob",omitempty`
 }
 
 // Init Users varibale
 // This variables stoors user data in memory
 var Users []User
+
+// Database connection struct
+type Connection struct {
+	Users *mongo.Collection
+}
 
 //Handlers
 func getTime(w http.ResponseWriter, req *http.Request) {
@@ -55,19 +68,32 @@ func getTime(w http.ResponseWriter, req *http.Request) {
 	json.NewEncoder(w).Encode(time)
 }
 
-func getUsers(w http.ResponseWriter, req *http.Request) {
+func (connection Connection) getUsers(w http.ResponseWriter, req *http.Request) {
 	// make sure content is not served as text to client
 	w.Header().Set("Content-Type", "application/json")
+	var users []User
 
 	//Get parameters value
 	params := req.URL.Query()
-	if params == nil {
-		//Encode all users
-		json.NewEncoder(w).Encode(Users)
+	// If no parameters Encode all users
+
+	if len(params) == 0 {
+		// create a filter (cursor)
+		// this filter returns all entries in the database
+		cursor, err := connection.Users.Find(context.TODO(), bson.M{})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message": "` + err.Error() + `" }`))
+		}
+		//Apply filter to all entries
+		cursor.All(context.TODO(), &users)
+
+		// repond with filtered content
+		json.NewEncoder(w).Encode(users)
 		return
 	}
 
-	//Go thouch all names
+	//Go through all names
 	searchName := req.URL.Query().Get("name")
 	var selectUsers []User
 	for _, item := range Users {
@@ -78,89 +104,112 @@ func getUsers(w http.ResponseWriter, req *http.Request) {
 
 	//Encode all users
 	json.NewEncoder(w).Encode(selectUsers)
-
 }
 
-func createUsers(w http.ResponseWriter, req *http.Request) {
+func (connection Connection) createUsers(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	//Create new user var and decode json contect in body
+	//Create new user var and decode json contect from body
 	var user User
 	_ = json.NewDecoder(req.Body).Decode(&user)
-	//Give uuid to new user
-	user.ID = uuid.NewString()
-	//Add user to memory
-	Users = append(Users, user)
+
+	// insert user into database
+	result, _ := connection.Users.InsertOne(context.TODO(), user)
 	//Response with json data
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(result)
 }
 
-func getUser(w http.ResponseWriter, req *http.Request) {
+func (connection Connection) getUser(w http.ResponseWriter, req *http.Request) {
 	// make sure content is not served as text to client
 	w.Header().Set("Content-Type", "application/json")
 	// retrieve map of veriables from get url
 	param := mux.Vars(req)
-	// loop through books to find id
-	for _, item := range Users {
-		if item.ID == param["id"] {
-			// Encode books as json data
-			json.NewEncoder(w).Encode(item)
-			return
-		}
+
+	// Gat object ID
+	objectId, err := primitive.ObjectIDFromHex(param["id"])
+	if err != nil {
+		log.Println("Invalid ID")
 	}
-	// catch all
-	// encode empty user
-	json.NewEncoder(w).Encode(&User{})
+
+	// Find document with sepcified ID
+	var user User
+	//TODO: Do not show ID field
+	connection.Users.FindOne(context.TODO(), bson.M{"_id": objectId}).Decode(&user)
+
+	// repond with user
+	json.NewEncoder(w).Encode(user)
 }
 
-func updateUser(w http.ResponseWriter, req *http.Request) {
-	//Get user id from url
-	path := req.URL.Path
-	split := strings.Split(path, "/")
-	searchId := split[len(split)-1]
-	//loops through data and updates specified user
-	for i, item := range Users {
-		if item.ID == searchId {
-			var tempUser User
-			//decode json data and override user detail
-			_ = json.NewDecoder(req.Body).Decode(&tempUser)
-			Users[i].Name = tempUser.Name
-			Users[i].Surname = tempUser.Surname
-			json.NewEncoder(w).Encode(Users[i])
-		}
+func (connection Connection) updateUser(w http.ResponseWriter, req *http.Request) {
+	// make sure content is not served as text to client
+	w.Header().Set("Content-Type", "application/json")
+	// retrieve map of veriables from get url
+	param := mux.Vars(req)
+	// Gat object ID
+	objectId, err := primitive.ObjectIDFromHex(param["id"])
+	if err != nil {
+		log.Println("Invalid ID")
 	}
+	var user User
+	// decode json in request body
+	json.NewDecoder(req.Body).Decode(&user)
+	// update specified user
+	result, err := connection.Users.UpdateOne(
+		context.TODO(),          // required context
+		bson.M{"_id": objectId}, // filter
+		bson.D{{"$set", user}},
+	)
+
+	json.NewEncoder(w).Encode(result)
+
 }
 
-func deleteUser(w http.ResponseWriter, req *http.Request) {
-	//Get user id from url
-	path := req.URL.Path
-	split := strings.Split(path, "/")
-	searchId := split[len(split)-1]
-	var tempUsers []User
-	//creates new slice without deleted user !very inefficent
-	for _, item := range Users {
-		if item.ID != searchId {
-			tempUsers = append(tempUsers, item)
-		}
+func (connection Connection) deleteUser(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	//Create new user var and decode json contect from body
+	param := mux.Vars(req)
+	//Get Object id
+	objectId, err := primitive.ObjectIDFromHex(param["id"])
+	if err != nil {
+		log.Println("Invalid ID")
 	}
-	//copy temp users over to Users
-	Users = tempUsers
+	result, err := connection.Users.DeleteOne(context.TODO(), bson.M{"_id": objectId})
+
+	//Response with json data
+	json.NewEncoder(w).Encode(result)
+
 }
 
 func main() {
+	// connect to mongodb
+	opts := options.Client().ApplyURI("mongodb://mongodb:27017")
+	clientdb, err := mongo.Connect(context.TODO(), opts)
+	if err != nil {
+		panic(err)
+	}
+
+	//ping db
+	err = clientdb.Ping(context.TODO(), readpref.Primary())
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Successfully connected and pinged mongodb")
+
+	collectionUsers := clientdb.Database("myDB").Collection("Users")
+	connection := Connection{
+		Users: collectionUsers,
+	}
+
 	// init server mux
 	router := mux.NewRouter()
 
-	//Mock Data
-	Users = append(Users, User{ID: uuid.NewString(), Name: "Filip", Surname: "Van der Zel"})
-	Users = append(Users, User{ID: uuid.NewString(), Name: "Jan", Surname: "Semmelink"})
-
 	//Handelers
 	router.HandleFunc("/time", getTime).Methods("GET")
-	router.HandleFunc("/users", getUsers).Methods("GET")
-	router.HandleFunc("/users", createUsers).Methods("POST")
-	router.HandleFunc("/users/{id}", getUser).Methods("GET")
-	router.HandleFunc("/users/{id}", updateUser).Methods("PUT")
-	router.HandleFunc("/users/{id}", deleteUser).Methods("DELETE")
+	router.HandleFunc("/users", connection.getUsers).Methods("GET")
+	router.HandleFunc("/users", connection.createUsers).Methods("POST")
+	router.HandleFunc("/users/{id}", connection.getUser).Methods("GET")
+	router.HandleFunc("/users/{id}", connection.updateUser).Methods("PUT")
+	router.HandleFunc("/users/{id}", connection.deleteUser).Methods("DELETE")
 
 	// listen and serve requests on localhost port 8080
 	// Use server mux router
