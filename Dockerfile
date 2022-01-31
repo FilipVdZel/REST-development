@@ -1,7 +1,7 @@
 
 # Alpine is chosen because of its smaller size
 # From Docker website
-FROM golang:1.16-alpine
+FROM golang:latest
 
 # Creates working directory on the Docker image
 WORKDIR /app

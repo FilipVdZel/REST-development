@@ -1,22 +1,26 @@
-version: "3.9"
+version: "3"
 
 services:
-  mongo:
+  mongodb-service:
     image: "mongo"
+    hostname: "mongodb"
     container_name: mongodb
+    restart: unless-stopped
     volumes:
       - "mongodata:/data/db" 
     ports:
-      - '27017:27017'
+      - 27017
+    depends_on:
+      - mongo
+
   web:
     container_name: restserver
     build: .
     ports:
-      - '8081:8081'
-    links:
-      - "mongo"
+      - 8081:8081
     depends_on:
       - mongo
+    restart: unless-stopped
 
 volumes:
   mongodata:

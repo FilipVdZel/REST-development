@@ -3,10 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -25,10 +23,10 @@ type date_time struct {
 
 // User type struct
 type User struct {
-	ID      primitive.ObjectID `bson:"_id,omitempty"`
-	Name    string             `bson:"name",omitempty`
-	Surname string             `bson:"surname",omitempty`
-	Dob     string             `bson:"dob",omitempty`
+	ID      primitive.ObjectID `json:"_id,omitempty" bson:"_id,omitempty"`
+	Name    string             `json:"name,omitempty" bson:"name",omitempty`
+	Surname string             `json:"surname,omitempty" bson:"surname",omitempty`
+	Dob     string             `json:"dob,omitempty" bson:"dob",omitempty`
 }
 
 // Init Users varibale
@@ -95,15 +93,17 @@ func (connection Connection) getUsers(w http.ResponseWriter, req *http.Request) 
 
 	//Go through all names
 	searchName := req.URL.Query().Get("name")
-	var selectUsers []User
-	for _, item := range Users {
-		if strings.Contains(item.Name, searchName) {
-			selectUsers = append(selectUsers, item)
-		}
+	filter := bson.D{{"name", primitive.Regex{Pattern: searchName, Options: "i"}}}
+	cursor, err := connection.Users.Find(context.TODO(), filter)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message": "` + err.Error() + `" }`))
 	}
 
+	//Apply filter to all entries
+	cursor.All(context.TODO(), &users)
 	//Encode all users
-	json.NewEncoder(w).Encode(selectUsers)
+	json.NewEncoder(w).Encode(users)
 }
 
 func (connection Connection) createUsers(w http.ResponseWriter, req *http.Request) {
@@ -181,21 +181,25 @@ func (connection Connection) deleteUser(w http.ResponseWriter, req *http.Request
 
 func main() {
 	// connect to mongodb
-	opts := options.Client().ApplyURI("mongodb://mongodb:27017")
-	clientdb, err := mongo.Connect(context.TODO(), opts)
+	log.Println("Connecting to mongodb ...")
+	clientOptions := options.Client().ApplyURI("mongodb://mongodb:27017")
+	client, err := mongo.NewClient(clientOptions)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
+	}
+	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	err = client.Connect(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Pinging...")
+
+	err = client.Ping(ctx, readpref.Primary())
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	//ping db
-	err = clientdb.Ping(context.TODO(), readpref.Primary())
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println("Successfully connected and pinged mongodb")
-
-	collectionUsers := clientdb.Database("myDB").Collection("Users")
+	collectionUsers := client.Database("myDB").Collection("Users")
 	connection := Connection{
 		Users: collectionUsers,
 	}
@@ -211,7 +215,7 @@ func main() {
 	router.HandleFunc("/users/{id}", connection.updateUser).Methods("PUT")
 	router.HandleFunc("/users/{id}", connection.deleteUser).Methods("DELETE")
 
-	// listen and serve requests on localhost port 8080
+	// listen and serve requests on localhost port 8081
 	// Use server mux router
 	log.Fatal(http.ListenAndServe(":8081", router))
 
