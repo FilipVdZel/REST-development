@@ -9,18 +9,28 @@ services:
     volumes:
       - "mongodata:/data/db" 
     ports:
-      - 27017
+      - 27017:27017
     depends_on:
       - mongo
 
-  web:
-    container_name: restserver
-    build: .
+  server-users:
+    container_name: server-users
+    build: webUsers/.
     ports:
       - 8081:8081
     depends_on:
       - mongo
     restart: unless-stopped
+  
+  server-subscriptions:
+    container_name: server-subscriptions
+    build: webSubscriptions/.
+    ports:
+      - 8082:8082
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
 
 volumes:
   mongodata:

@@ -1,5 +1,4 @@
 
-# Alpine is chosen because of its smaller size
 # From Docker website
 FROM golang:latest
 
@@ -15,12 +14,12 @@ RUN go mod download
 COPY *.go ./
 
 # Build the application binary 
-RUN go build -o /restserver
+RUN go build -o /api-users
 
 # Open port 8081 to be accesseble outside container
 EXPOSE 8081
 
 # This is the command that will execute when this image
 # is used to start a container
-CMD [ "/restserver"]
+CMD [ "/api-users"]
 
